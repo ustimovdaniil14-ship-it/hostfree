@@ -15,7 +15,7 @@ const OWNERS = new Set((process.env.OWNER_IDS || '1780243476').split(',').map(s 
 for (const o of OWNERS) ADMINS.add(o);
 if (!TOKEN || !process.env.DATABASE_URL) { console.error('Нужны BOT_TOKEN и DATABASE_URL'); process.exit(1); }
 
-const DEP_MAX = 100000, MIN_WD = 10, DEF_WD_LIMIT = 100000, MAX_CHANCE = 35;
+const DEP_MAX = 100000, MIN_WD = 10, DEF_WD_LIMIT = 100000, MAX_CHANCE = 42;
 const STAR_X = [2.5, 3, 5, 10, 20];
 
 const db = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 8 });
@@ -38,6 +38,31 @@ async function tg(method, params = {}) {
 }
 const send = (chat_id, text, extra = {}) => tg('sendMessage', { chat_id, text, parse_mode: 'HTML', ...extra }).catch(e => console.log('send fail', chat_id, e.message));
 const alertAdmins = t => { for (const id of ADMINS) send(id, t); };
+
+/* ================= ОБЯЗАТЕЛЬНАЯ ПОДПИСКА НА КАНАЛ ================= */
+const SUB_CHANNEL = process.env.SUB_CHANNEL || '@onewinChanel';                         // username канала (из ссылки staticgram.top/onewinChanel)
+const SUB_URL = process.env.SUB_URL || 'https://staticgram.top/onewinChanel';
+const subOk = new Map();      // uid -> до какого времени помним, что подписан (чтобы не дёргать API на каждый запрос)
+let subAlertAt = 0;
+async function isSubscribed(uid) {
+  if (isAdmin(uid)) return true;
+  const hit = subOk.get(uid); if (hit && hit > Date.now()) return true;
+  try {
+    const m = await tg('getChatMember', { chat_id: SUB_CHANNEL, user_id: uid });
+    const ok = ['creator', 'administrator', 'member'].includes(m.status) || (m.status === 'restricted' && m.is_member === true);
+    if (ok) subOk.set(uid, Date.now() + 3 * 60 * 1000); else subOk.delete(uid);
+    return ok;
+  } catch (e) {
+    // «пользователя нет в канале» некоторые серверы отдают ошибкой 400: это ответ «не подписан»
+    if (e.api && e.code === 400 && /participant|not found|user_not|left|kicked/i.test(e.message || '') && !/chat not found|admin/i.test(e.message || '')) { subOk.delete(uid); return false; }
+    // проверить не удалось (бот не админ канала, неверный username, сбой API): не блокируем всех, но предупреждаем админов
+    console.error('getChatMember', e.message);
+    if (Date.now() - subAlertAt > 30 * 60 * 1000) { subAlertAt = Date.now(); alertAdmins(`⚠️ Не могу проверить подписку на ${esc(SUB_CHANNEL)}: ${esc(e.message)}\nДобавь бота администратором канала. Пока проверка пропускается.`); }
+    return true;
+  }
+}
+const subKb = () => ({ reply_markup: { inline_keyboard: [[{ text: '📢 Подписаться на канал', url: SUB_URL }], [{ text: '✅ Я подписался', callback_data: 'sub:check' }]] } });
+const subText = '📢 <b>Подпишись на канал</b>\nЧтобы пользоваться ботом, нужно быть подписанным на наш канал. Подпишись и нажми «Я подписался».';
 
 /* ================= БД ================= */
 async function initDb() {
@@ -117,7 +142,9 @@ async function auth(req, res, next) {
     const row = (await db.query('SELECT banned FROM users WHERE id=$1', [u.id])).rows[0];
     if (row.banned) return res.status(403).json({ error: 'Доступ закрыт' });
     const c = await cfg();
-    if (c.maint && !isAdmin(u.id) && !(await isPanelAdmin(u.id))) return res.status(503).json({ error: 'Технические работы, загляни позже' });
+    const staff = isAdmin(u.id) || await isPanelAdmin(u.id);
+    if (c.maint && !staff) return res.status(503).json({ error: 'Технические работы, загляни позже' });
+    if (!staff && !(await isSubscribed(u.id))) return res.status(403).json({ error: 'Подпишись на канал, чтобы играть', sub: true, channel: SUB_URL });
     req.user = u; req.cfg = c; next();
   } catch (e) { console.error(e); res.status(500).json({ error: 'Ошибка сервера' }); }
 }
@@ -174,7 +201,7 @@ app.post('/api/buy', auth, wrap(async (req, res) => {
   res.json({ me: await meFor(req.user.id, req.cfg) });
 }));
 
-/* ---- апгрейд (макс. шанс 35%) ---- */
+/* ---- апгрейд (макс. шанс 42%) ---- */
 app.post('/api/upgrade', auth, wrap(async (req, res) => {
   if (!req.cfg.upgrade) throw HttpErr(403, 'Игра временно отключена');
   const b = req.body, mode = b.mode === 'star' ? 'star' : 'nft';
@@ -450,6 +477,7 @@ async function onMessage(m) {
   const [cmdRaw, ...args] = text.split(/\s+/);
   const cmd = cmdRaw.split('@')[0].toLowerCase();
   if ((await db.query('SELECT banned FROM users WHERE id=$1', [u.id])).rows[0].banned) return send(u.id, '⛔ Доступ закрыт');
+  if (!isAdmin(u.id) && !(await isPanelAdmin(u.id)) && !(await isSubscribed(u.id))) return send(u.id, subText, subKb());
 
   if (cmd === '/start') {
     if (args[0] === 'custom') { pendingCustom.set(u.id, Date.now()); return send(u.id, `Напиши сумму пополнения числом (10–${fmt(DEP_MAX)} ⭐)`); }
@@ -491,6 +519,10 @@ async function onPayment(m) {
 }
 async function onCallback(q) {
   const uid = q.from.id;
+  if (q.data === 'sub:check') {
+    if (await isSubscribed(uid)) { tg('answerCallbackQuery', { callback_query_id: q.id, text: '✅ Подписка подтверждена' }).catch(() => {}); return send(uid, '🎰 <b>Добро пожаловать!</b>\nАпгрейд NFT, звёзды и мины. Жми кнопку ниже.', kbPlay()); }
+    return tg('answerCallbackQuery', { callback_query_id: q.id, text: 'Подписка не найдена. Подпишись на канал и нажми ещё раз', show_alert: true }).catch(() => {});
+  }
   if (!isAdmin(uid) || !String(q.data || '').startsWith('a:')) return tg('answerCallbackQuery', { callback_query_id: q.id }).catch(() => {});
   const [, act, arg] = q.data.split(':');
   if (act === 'tg') { const cur = await getSet(arg, arg === 'maint' ? '0' : '1'); await putSet(arg, cur === '1' ? '0' : '1'); }

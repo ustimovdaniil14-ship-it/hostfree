@@ -166,16 +166,30 @@ let ME={id:'0',name:'Игрок',bal:0,inv:[],ups:0,wins:0,best:0,wag:0,banned:f
 const U=()=>ME;
 const INIT=()=>(tg&&tg.initData)||new URLSearchParams(location.hash.slice(1)).get('tgWebAppData')||'';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+/* ===== обязательная подписка на канал ===== */
+let SUBURL='https://staticgram.top/onewinChanel';
+function showSub(url){
+  if(url)SUBURL=url;if($('subgate'))return;
+  const d=document.createElement('div');d.id='subgate';
+  d.style.cssText='position:fixed;inset:0;z-index:99999;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px';
+  d.innerHTML='<div style="max-width:360px;width:100%;text-align:center;background:var(--sf);border:1px solid var(--bd);border-radius:24px;padding:28px 22px"><div style="font-size:44px">📢</div><div style="font-size:20px;font-weight:800;margin:10px 0 6px;color:var(--tx)">Подпишись на канал</div><div style="color:var(--mu);font-size:14px;line-height:1.45;margin-bottom:18px">Чтобы пользоваться ботом, нужно подписаться на наш канал. После подписки нажми «Я подписался».</div><button id="subgo" style="width:100%;padding:14px;border-radius:16px;border:0;background:var(--ac);color:var(--on);font-weight:800;font-size:16px;margin-bottom:10px">Подписаться</button><button id="subck" style="width:100%;padding:14px;border-radius:16px;border:1px solid var(--bd);background:transparent;color:var(--tx);font-weight:700;font-size:16px">Я подписался</button><div id="subst" style="color:var(--bad);font-size:13px;margin-top:12px;min-height:16px"></div></div>';
+  document.body.appendChild(d);
+  $('subgo').onclick=()=>{try{if(tg&&tg.openLink)tg.openLink(SUBURL);else window.open(SUBURL,'_blank')}catch(e){window.open(SUBURL,'_blank')}};
+  $('subck').onclick=async()=>{const b=$('subck');b.disabled=true;$('subst').textContent='';
+    try{await api('/state');d.remove();sync.err=0;await sync()}catch(e){const s=$('subst');if(s)s.textContent='Подписка не найдена. Подпишись на канал и попробуй снова'}
+    b.disabled=false};
+}
 async function api(path,body){
   const r=await fetch('/api'+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json','X-Init-Data':INIT()},body:body?JSON.stringify(body):undefined});
   const j=await r.json().catch(()=>({}));
-  if(!r.ok)throw new Error(j.error||'Ошибка сервера');
+  if(!r.ok){if(j.sub)showSub(j.channel);throw new Error(j.error||'Ошибка сервера')}
   return j;
 }
 let mBusy=false;
 /* возвращает, на сколько выросло пополнение (-1 при ошибке) */
 async function sync(){
-  if(busy||mBusy)return 0;
+  if(busy||mBusy||$('subgate'))return 0;
   try{
     const r=await api('/state'),prev=ME.deposited||0;ME=r.me;$('onN').textContent=r.online;
     const g=ME.mines;

@@ -15,7 +15,7 @@ const OWNERS = new Set((process.env.OWNER_IDS || '1780243476').split(',').map(s 
 for (const o of OWNERS) ADMINS.add(o);
 if (!TOKEN || !process.env.DATABASE_URL) { console.error('Нужны BOT_TOKEN и DATABASE_URL'); process.exit(1); }
 
-const DEP_MAX = 100000, MIN_WD = 10, DEF_WD_LIMIT = 20000, MAX_CHANCE = 42;
+const DEP_MAX = 100000, MIN_WD = 10, DEF_WD_LIMIT = 100000, MAX_CHANCE = 35;
 const STAR_X = [2.5, 3, 5, 10, 20];
 
 const db = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 8 });
@@ -67,6 +67,8 @@ async function initDb() {
   CREATE TABLE IF NOT EXISTS admins(uid BIGINT PRIMARY KEY, granted_by BIGINT, ts TIMESTAMPTZ NOT NULL DEFAULT now());
   CREATE TABLE IF NOT EXISTS promos(code TEXT PRIMARY KEY, amt BIGINT NOT NULL, max INT NOT NULL);
   CREATE TABLE IF NOT EXISTS promo_uses(code TEXT NOT NULL, uid BIGINT NOT NULL, PRIMARY KEY(code, uid));`);
+  // один раз при запуске: поднять сохранённый лимит вывода до 100 000 (иначе в базе останется старое значение)
+  if ((await getSet('wd_limit_100k', '0')) !== '1') { await putSet('wd_limit', 100000); await putSet('wd_limit_100k', '1'); }
 }
 const getSet = async (k, d) => { const r = await db.query('SELECT value FROM settings WHERE key=$1', [k]); return r.rows[0] ? r.rows[0].value : d; };
 const putSet = (k, v) => db.query('INSERT INTO settings(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value', [k, String(v)]);
@@ -172,7 +174,7 @@ app.post('/api/buy', auth, wrap(async (req, res) => {
   res.json({ me: await meFor(req.user.id, req.cfg) });
 }));
 
-/* ---- апгрейд (макс. шанс 42%) ---- */
+/* ---- апгрейд (макс. шанс 35%) ---- */
 app.post('/api/upgrade', auth, wrap(async (req, res) => {
   if (!req.cfg.upgrade) throw HttpErr(403, 'Игра временно отключена');
   const b = req.body, mode = b.mode === 'star' ? 'star' : 'nft';
@@ -300,7 +302,7 @@ app.post('/api/deposit_chat', auth, wrap(async (req, res) => {
   catch (e) { console.error('sendInvoice', e.message); throw HttpErr(502, 'Не удалось отправить счёт'); }
 }));
 
-/* ---- автовывод (лимит 20 000 ★ в сутки) ---- */
+/* ---- автовывод (лимит 100 000 ★ в сутки, меняется командой /limit) ---- */
 app.post('/api/withdraw', auth, wrap(async (req, res) => {
   const a = Math.floor(+req.body.amount), uid = req.user.id;
   if (!req.cfg.wd) throw HttpErr(403, 'Вывод временно отключён');
@@ -553,7 +555,7 @@ async function adminCmd(u, cmd, args, full) {
   if (cmd === '/top') return reply((await adminView('top')).text);
   if (cmd === '/online') return reply(`🟢 Онлайн: <b>${fmt(await onlineCount())}</b>`);
   if (cmd === '/items') return reply('<b>Предметы</b>\n' + ITEMS.map((it, i) => `${i} · ${esc(it[0])} — ${fmt(it[1])}`).join('\n'));
-  if (cmd === '/limit') { const n = num(args[0]); if (!(n >= MIN_WD)) return reply('Использование: /limit 20000'); await putSet('wd_limit', n); return reply(`✅ Лимит вывода: ${fmt(n)} ⭐/сутки`); }
+  if (cmd === '/limit') { const n = num(args[0]); if (!(n >= MIN_WD)) return reply('Использование: /limit 100000'); await putSet('wd_limit', n); return reply(`✅ Лимит вывода: ${fmt(n)} ⭐/сутки`); }
   if (cmd === '/promo') {
     const code = String(args[0] || '').toUpperCase(), amt = num(args[1]), max = num(args[2]);
     if (!code || !(amt >= 1) || !(max >= 1)) return reply('Использование: /promo КОД 500 100');

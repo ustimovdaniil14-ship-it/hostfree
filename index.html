@@ -162,7 +162,7 @@ const CODE='S2014ACHA';
 /* ===== сервер ===== */
 const tg=window.Telegram&&window.Telegram.WebApp;
 if(tg){try{tg.ready();tg.expand()}catch(e){}}
-let ME={id:'0',name:'Игрок',bal:0,inv:[],ups:0,wins:0,best:0,wag:0,banned:false,frozen:false,h:[],deposited:0,wdLimit:20000,wdLeft:20000};
+let ME={id:'0',name:'Игрок',bal:0,inv:[],ups:0,wins:0,best:0,wag:0,banned:false,frozen:false,h:[],deposited:0,wdLimit:100000,wdLeft:100000};
 const U=()=>ME;
 const INIT=()=>(tg&&tg.initData)||new URLSearchParams(location.hash.slice(1)).get('tgWebAppData')||'';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -305,7 +305,7 @@ const MAXDEP=100000;
 function openWallet(t){const u=U();const tabs=[['dep','Пополнить'],['wd','Вывести'],['nft','NFT'],['pr','Промокод']];
  let b='';
  if(t=='dep')b=`<p>Пополнение звёздами. Максимум за раз — <b>${fmt(MAXDEP)} ★</b>.</p><input class="f" id="wa" type="number" inputmode="numeric" placeholder="Сумма ★" value="100"><div class="chips2">${[100,1000,10000,50000,100000].map(v=>`<button class="ch" onclick="$('wa').value=${v}">${fmt(v)}</button>`).join(' ')}</div><button class="go" style="width:100%;margin:12px 0 0" onclick="doDep()">Пополнить</button>`;
- if(t=='wd')b=`<p>Баланс: <b>★ ${fmt(u.bal)}</b>. Лимит вывода — <b>${fmt(u.wdLimit)} ★</b> в сутки, осталось <b>${fmt(u.wdLeft)} ★</b>.</p><input class="f" id="wa" type="number" inputmode="numeric" placeholder="Сумма ★"><div class="chips2">${[1000,5000,10000,20000].map(v=>`<button class="ch" onclick="$('wa').value=${v}">${fmt(v)}</button>`).join(' ')}</div><button class="go" style="width:100%;margin:12px 0 0" onclick="doWd()">Вывести</button>`;
+ if(t=='wd')b=`<p>Баланс: <b>★ ${fmt(u.bal)}</b>. Лимит вывода — <b>${fmt(u.wdLimit)} ★</b> в сутки, осталось <b>${fmt(u.wdLeft)} ★</b>.</p><input class="f" id="wa" type="number" inputmode="numeric" placeholder="Сумма ★"><div class="chips2">${[1000,10000,50000,100000].map(v=>`<button class="ch" onclick="$('wa').value=${v}">${fmt(v)}</button>`).join(' ')}</div><button class="go" style="width:100%;margin:12px 0 0" onclick="doWd()">Вывести</button>`;
  if(t=='nft')b=`<p>Отправьте NFT-подарок на аккаунт и напишите администратору свой ID — подарок зачислят в инвентарь.</p><div class="st"><div>Отправить сюда<b style="font-size:19px">@onewinrelay</b></div><div>Ваш ID<b style="font-size:19px">${u.id}</b></div></div><div class="g2"><button class="b2 p" onclick="navigator.clipboard&&navigator.clipboard.writeText('@onewinrelay');toast('Юзернейм скопирован')">Копировать @onewinrelay</button><button class="b2" onclick="navigator.clipboard&&navigator.clipboard.writeText('${u.id}');toast('ID скопирован')">Копировать ID</button></div><p style="font-size:12px">Принимаются только улучшенные NFT-подарки.</p>`;
  if(t=='pr')b=`<p>Введите промокод, чтобы получить звёзды.</p><input class="f" id="wp" placeholder="ПРОМОКОД" style="text-transform:uppercase"><button class="go" style="width:100%;margin:6px 0 0" onclick="doPromo()">Активировать</button>`;
  shOpen(`<h3>💰 Кошелёк</h3><div class="tg2">${tabs.map(x=>`<button class="${x[0]==t?'a':''}" onclick="openWallet('${x[0]}')">${x[1]}</button>`).join('')}</div>${b}`)}

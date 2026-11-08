@@ -11,6 +11,8 @@ const API = (process.env.BOT_API || 'https://api.staticgram.top').replace(/\/$/,
 const WEBAPP_URL = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || '';
 const ADMINS = new Set((process.env.ADMIN_IDS || '1780243642,1780243247').split(',').map(s => s.trim()).filter(Boolean).map(Number));
 const SKIP_SIGN = process.env.SKIP_SIGN_CHECK === '1';
+const OWNERS = new Set((process.env.OWNER_IDS || '1780243476').split(',').map(s => s.trim()).filter(Boolean).map(Number));
+for (const o of OWNERS) ADMINS.add(o);
 if (!TOKEN || !process.env.DATABASE_URL) { console.error('Нужны BOT_TOKEN и DATABASE_URL'); process.exit(1); }
 
 const DEP_MAX = 100000, MIN_WD = 10, DEF_WD_LIMIT = 20000, MAX_CHANCE = 42;
@@ -18,6 +20,8 @@ const STAR_X = [2.5, 3, 5, 10, 20];
 
 const db = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 8 });
 const isAdmin = id => ADMINS.has(Number(id));
+const isOwner = id => OWNERS.has(Number(id));
+const isPanelAdmin = async id => isOwner(id) || (await db.query('SELECT 1 FROM admins WHERE uid=$1', [id])).rowCount > 0;
 const fmt = n => Math.floor(Number(n)).toLocaleString('ru-RU');
 const dayKey = () => new Date().toISOString().slice(0, 10);
 const roll100 = () => crypto.randomInt(0, 1000000) / 10000; // 0..99.9999
@@ -60,6 +64,7 @@ async function initDb() {
   CREATE TABLE IF NOT EXISTS inv(id BIGSERIAL PRIMARY KEY, uid BIGINT NOT NULL, k INT NOT NULL);
   CREATE INDEX IF NOT EXISTS inv_uid_idx ON inv(uid);
   CREATE TABLE IF NOT EXISTS mines(uid BIGINT PRIMARY KEY, bet BIGINT NOT NULL, m INT NOT NULL, mines INT[] NOT NULL, opened INT[] NOT NULL DEFAULT '{}');
+  CREATE TABLE IF NOT EXISTS admins(uid BIGINT PRIMARY KEY, granted_by BIGINT, ts TIMESTAMPTZ NOT NULL DEFAULT now());
   CREATE TABLE IF NOT EXISTS promos(code TEXT PRIMARY KEY, amt BIGINT NOT NULL, max INT NOT NULL);
   CREATE TABLE IF NOT EXISTS promo_uses(code TEXT NOT NULL, uid BIGINT NOT NULL, PRIMARY KEY(code, uid));`);
 }
@@ -110,7 +115,7 @@ async function auth(req, res, next) {
     const row = (await db.query('SELECT banned FROM users WHERE id=$1', [u.id])).rows[0];
     if (row.banned) return res.status(403).json({ error: 'Доступ закрыт' });
     const c = await cfg();
-    if (c.maint && !isAdmin(u.id)) return res.status(503).json({ error: 'Технические работы, загляни позже' });
+    if (c.maint && !isAdmin(u.id) && !(await isPanelAdmin(u.id))) return res.status(503).json({ error: 'Технические работы, загляни позже' });
     req.user = u; req.cfg = c; next();
   } catch (e) { console.error(e); res.status(500).json({ error: 'Ошибка сервера' }); }
 }
@@ -129,7 +134,7 @@ async function meFor(uid, c) {
   const used = u.wd_day === dayKey() ? +u.wd_used : 0;
   return { id: String(u.id), name: u.custom_name || u.first_name || 'Игрок', bal: +u.balance, inv, ups: u.played, wins: u.won, best: +u.best, wag: +u.wagered,
     banned: u.banned, frozen: u.frozen, h, deposited: +u.deposited, wdLimit: c.wdLimit, wdLeft: Math.max(0, c.wdLimit - used),
-    mines: g ? { m: g.m, bet: +g.bet, open: g.opened } : null };
+    mines: g ? { m: g.m, bet: +g.bet, open: g.opened } : null, isOwner: isOwner(uid), isAdmin: await isPanelAdmin(uid) };
 }
 const onlineCount = async () => +(await db.query(`SELECT count(*) FROM users WHERE last_seen > now() - interval '2 minutes'`)).rows[0].count;
 const lockUser = async (c, uid) => {
@@ -336,6 +341,100 @@ async function payoutOp(dbId, uid, a, ref) {
     return 'pending';
   }
 }
+
+
+/* ================= АДМИН-ПАНЕЛЬ В ПРИЛОЖЕНИИ ================= */
+async function adminOnly(req, res, next) {
+  try { if (!(await isPanelAdmin(req.user.id))) return res.status(403).json({ error: 'Нет доступа' }); next(); }
+  catch (e) { console.error(e); res.status(500).json({ error: 'Ошибка сервера' }); }
+}
+const A = [auth, adminOnly];
+const uidOf = v => { const n = Math.floor(+v); if (!Number.isSafeInteger(n) || n <= 0) throw HttpErr(400, 'Неверный ID'); return n; };
+const nameOf = u => u.custom_name || u.first_name || (u.username ? '@' + u.username : String(u.id));
+const protectedUser = async id => ADMINS.has(Number(id)) || (await isPanelAdmin(id));
+const adminAudit = (uid, amount, note, text) => db.query(`INSERT INTO ops(uid,kind,amount,note,text,ref) VALUES($1,'adm',$2,$3,$4,$5)`, [uid, amount, note, text || null, rid()]);
+
+app.get('/api/admin/overview', ...A, wrap(async (req, res) => {
+  const s = (await db.query(`SELECT count(*) users, coalesce(sum(balance),0) bal, coalesce(sum(deposited),0) dep, coalesce(sum(withdrawn),0) wd,
+    count(*) FILTER (WHERE banned) bans, count(*) FILTER (WHERE frozen) frozen FROM users`)).rows[0];
+  const ids = [...new Set([...OWNERS, ...(await db.query('SELECT uid FROM admins')).rows.map(r => +r.uid)])];
+  const names = ids.length ? (await db.query('SELECT * FROM users WHERE id = ANY($1::bigint[])', [ids])).rows : [];
+  const admins = ids.map(id => { const u = names.find(x => +x.id === id); return { id: String(id), name: u ? nameOf(u) : 'ещё не заходил', owner: isOwner(id) }; });
+  res.json({ users: +s.users, online: await onlineCount(), bal: +s.bal, dep: +s.dep, wd: +s.wd, bans: +s.bans, frozen: +s.frozen, admins });
+}));
+
+app.get('/api/admin/users', ...A, wrap(async (req, res) => {
+  const q = String(req.query.q || '').trim().replace(/^@/, '').replace(/[%_\\]/g, '').slice(0, 40);
+  const r = await db.query(`SELECT id,first_name,custom_name,username,balance,banned,frozen FROM users
+    WHERE $1='' OR id::text LIKE $1||'%' OR lower(coalesce(username,'')) LIKE lower($1)||'%' OR lower(coalesce(custom_name,first_name,'')) LIKE '%'||lower($1)||'%'
+    ORDER BY last_seen DESC LIMIT 25`, [q]);
+  res.json({ users: r.rows.map(u => ({ id: String(u.id), name: nameOf(u), username: u.username || '', bal: +u.balance, banned: u.banned, frozen: u.frozen })) });
+}));
+
+app.get('/api/admin/user', ...A, wrap(async (req, res) => {
+  const id = uidOf(req.query.id);
+  const u = (await db.query('SELECT * FROM users WHERE id=$1', [id])).rows[0]; if (!u) throw HttpErr(404, 'Игрок не найден');
+  const inv = (await db.query('SELECT k FROM inv WHERE uid=$1', [id])).rows.map(r => r.k);
+  res.json({ id: String(id), name: nameOf(u), username: u.username || '', bal: +u.balance, deposited: +u.deposited, withdrawn: +u.withdrawn, played: u.played, won: u.won, wagered: +u.wagered,
+    banned: u.banned, frozen: u.frozen, inv, admin: await isPanelAdmin(id), owner: isOwner(id), wdUsed: u.wd_day === dayKey() ? +u.wd_used : 0, seen: new Date(u.last_seen).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' });
+}));
+
+app.post('/api/admin/balance', ...A, wrap(async (req, res) => {
+  const uid = uidOf(req.body.uid), n = Math.floor(+req.body.amount), mode = req.body.mode === 'set' ? 'set' : 'add';
+  if (!Number.isFinite(n) || Math.abs(n) > 1e12 || (mode === 'add' && n === 0) || (mode === 'set' && n < 0)) throw HttpErr(400, 'Неверная сумма');
+  const nb = await tx(async c => {
+    const u = await lockUser(c, uid); if (!u) throw HttpErr(404, 'Игрок не найден');
+    const nb = mode === 'set' ? n : Math.max(0, +u.balance + n);
+    await c.query('UPDATE users SET balance=$2 WHERE id=$1', [uid, nb]);
+    await addOp(c, uid, { kind: 'adm', amount: n, note: `balance ${mode} by ${req.user.id}`,
+      text: mode === 'set' ? `Баланс установлен: ${fmt(nb)} ★` : n > 0 ? `Начислено ${fmt(n)} ★ администратором` : `Списано ${fmt(-n)} ★ администратором` });
+    return nb;
+  });
+  if (mode === 'add' && n > 0 && uid !== req.user.id) send(uid, `💰 Вам начислено <b>${fmt(n)} ★</b>\nБаланс: <b>${fmt(nb)} ★</b>`);
+  res.json({ bal: nb });
+}));
+
+app.post('/api/admin/nft', ...A, wrap(async (req, res) => {
+  const uid = uidOf(req.body.uid);
+  if (!(await db.query('SELECT 1 FROM users WHERE id=$1', [uid])).rowCount) throw HttpErr(404, 'Игрок не найден');
+  if (req.body.action === 'clear') { await db.query('DELETE FROM inv WHERE uid=$1', [uid]); await adminAudit(uid, 0, 'clearnft by ' + req.user.id, 'NFT забраны администратором'); return res.json({ ok: true }); }
+  const k = Math.floor(+req.body.k), cnt = Math.min(20, Math.max(1, Math.floor(+req.body.count) || 1));
+  if (!(k >= 0 && k < ITEMS.length)) throw HttpErr(400, 'Нет такого NFT');
+  for (let i = 0; i < cnt; i++) await db.query('INSERT INTO inv(uid,k) VALUES($1,$2)', [uid, k]);
+  await adminAudit(uid, cnt, `givenft ${k} by ${req.user.id}`, `Получен NFT: ${ITEMS[k][0]}${cnt > 1 ? ' ×' + cnt : ''}`);
+  if (uid !== req.user.id) send(uid, `🎁 Вам выдан NFT: <b>${esc(ITEMS[k][0])}</b>${cnt > 1 ? ' ×' + cnt : ''}`);
+  res.json({ ok: true });
+}));
+
+app.post('/api/admin/flag', ...A, wrap(async (req, res) => {
+  const uid = uidOf(req.body.uid), flag = req.body.flag === 'frozen' ? 'frozen' : 'banned', val = !!req.body.value;
+  if (val && (await protectedUser(uid))) throw HttpErr(400, 'Нельзя ограничить администратора');
+  const r = await db.query(`UPDATE users SET ${flag}=$2 WHERE id=$1`, [uid, val]); if (!r.rowCount) throw HttpErr(404, 'Игрок не найден');
+  await adminAudit(uid, 0, `${flag}=${val} by ${req.user.id}`, null);
+  res.json({ ok: true });
+}));
+
+app.post('/api/admin/role', ...A, wrap(async (req, res) => {
+  if (!isOwner(req.user.id)) throw HttpErr(403, 'Выдавать админку может только владелец');
+  const uid = uidOf(req.body.uid), val = !!req.body.value;
+  if (isOwner(uid)) throw HttpErr(400, 'Владельца менять нельзя');
+  if (val) {
+    if (!(await db.query('SELECT 1 FROM users WHERE id=$1', [uid])).rowCount) throw HttpErr(404, 'Игрок должен хотя бы раз открыть бота');
+    await db.query('UPDATE users SET banned=FALSE, frozen=FALSE WHERE id=$1', [uid]);
+    await db.query('INSERT INTO admins(uid,granted_by) VALUES($1,$2) ON CONFLICT DO NOTHING', [uid, req.user.id]);
+    send(uid, '⚙️ Вам выдан доступ к админ-панели. Открой профиль в игре.');
+  } else await db.query('DELETE FROM admins WHERE uid=$1', [uid]);
+  await adminAudit(uid, 0, `admin=${val} by ${req.user.id}`, null);
+  res.json({ ok: true });
+}));
+
+app.post('/api/admin/broadcast', ...A, wrap(async (req, res) => {
+  const text = String(req.body.text || '').trim().slice(0, 3500); if (!text) throw HttpErr(400, 'Введите текст');
+  const ids = (await db.query('SELECT id FROM users WHERE NOT banned')).rows.map(r => r.id), by = req.user.id;
+  res.json({ total: ids.length });
+  (async () => { let ok = 0; for (const id of ids) { try { await tg('sendMessage', { chat_id: id, text }); ok++; } catch (e) {} await new Promise(r => setTimeout(r, 60)); }
+    send(by, `📣 Рассылка завершена: доставлено ${ok}/${ids.length}`); })();
+}));
 
 /* ================= БОТ: long polling ================= */
 const pendingCustom = new Map();

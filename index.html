@@ -270,7 +270,7 @@ function openProf(){const u=U();
   <input class="f" id="nm" maxlength="20" value="${esc(u.name)}" placeholder="Имя"><button class="b2" onclick="saveName()">Сохранить имя</button>
   <div class="st"><div>Баланс<b>★ ${fmt(u.bal)}</b></div><div>NFT<b>${u.inv.length}</b></div><div>Игр<b>${u.ups}</b></div><div>Побед<b>${u.wins}</b></div><div>Лучший выигрыш<b>★ ${fmt(u.best)}</b></div><div>Оборот<b>★ ${fmt(u.wag)}</b></div></div>
   <h4>История</h4>${u.h.length?u.h.slice(0,6).map(x=>`<div class="mu" style="font-size:13px;padding:3px 0">${esc(x)}</div>`).join(''):'<div class="mu" style="font-size:13px">Пока пусто</div>'}
-  <div class="g2" style="margin-top:14px"><button class="b2" onclick="openTheme()">🎨 Тема</button><span></span></div>`)}
+  <div class="g2" style="margin-top:14px"><button class="b2" onclick="openTheme()">🎨 Тема</button><span></span></div>${u.isAdmin?'<button class="b2 p" style="width:100%;margin-top:8px" onclick="openAdm()">⚙ Админ-панель</button>':''}`)}
 async function saveName(){const v=$('nm').value.trim();if(!v)return;try{const r=await api('/name',{name:v});ME=r.me;render();openProf();toast('Имя сохранено')}catch(e){toast(e.message)}}
 $('prof').onclick=openProf;
 
@@ -321,6 +321,45 @@ async function doWd(){if(guard())return;const a=Math.floor(+$('wa').value),u=U()
   try{const r=await api('/withdraw',{amount:a});ME=r.me;render();shClose();toast(r.status=='pending'?'Вывод ★ '+fmt(a)+' обрабатывается':'Выведено ★ '+fmt(a))}catch(e){toast(e.message)}}
 async function doPromo(){if(guard())return;const c=$('wp').value.trim();if(!c)return;
   try{const r=await api('/promo',{code:c});ME=r.me;render();shClose();toast('Промокод активирован: +★ '+fmt(r.amount))}catch(e){toast(e.message)}}
+/* ===== админ-панель ===== */
+let AQ='';
+async function openAdm(){
+  let o;try{o=await api('/admin/overview')}catch(e){return toast(e.message)}
+  shOpen(`<h3>⚙ Админ-панель</h3><p>Игроков: ${fmt(o.users)} · онлайн: ${fmt(o.online)}<br>На балансах: ★ ${fmt(o.bal)} · пополнено: ★ ${fmt(o.dep)} · выведено: ★ ${fmt(o.wd)}<br>Банов: ${o.bans} · заморожено: ${o.frozen}</p>
+  <h4>Администраторы</h4>${o.admins.map(a=>`<div class="ur"><span>${esc(a.name)} <span class="mu" style="font-weight:500">${a.id}</span>${a.owner?' <span class="tag c">владелец</span>':''}</span>${ME.isOwner&&!a.owner?`<button class="b2 d" onclick="admRole('${a.id}',false)">Снять</button>`:''}</div>`).join('')}
+  <h4>Игроки</h4><input class="f" id="aq" placeholder="ID, имя или @ник" value="${esc(AQ)}" oninput="AQ=this.value;admSearch()"><div id="al"></div>
+  <h4>Рассылка</h4><textarea class="f" id="bc" rows="3" placeholder="Текст сообщения для всех игроков"></textarea><button class="b2 p" style="width:100%" onclick="admBc()">Отправить всем</button>`);
+  admSearch();
+}
+let admT=0;
+function admSearch(){clearTimeout(admT);admT=setTimeout(async()=>{
+  try{const r=await api('/admin/users?q='+encodeURIComponent(AQ)),el=$('al');if(!el)return;
+    el.innerHTML=r.users.length?r.users.map(u=>`<button class="ur" onclick="admUser('${u.id}')"><span>${esc(u.name)}${u.username?' <span class="mu" style="font-weight:500">@'+esc(u.username)+'</span>':''}<span class="mu" style="font-weight:500;font-size:12px"> ${u.id}</span>${u.banned?'<span class="tag r">бан</span>':''}${u.frozen?'<span class="tag c">фриз</span>':''}</span><span>★ ${fmt(u.bal)}</span></button>`).join(''):'<div class="mu" style="padding:8px">Никого не найдено</div>'}
+  catch(e){toast(e.message)}},250)}
+async function admUser(id){
+  let u;try{u=await api('/admin/user?id='+id)}catch(e){return toast(e.message)}
+  const cnt={};u.inv.forEach(k=>cnt[k]=(cnt[k]||0)+1);
+  shOpen(`<button class="b2" onclick="openAdm()">← К списку</button>
+  <h3 style="margin-top:12px">${esc(u.name)} ${u.admin?'<span class="tag c">админ</span>':''}${u.banned?'<span class="tag r">бан</span>':''}${u.frozen?'<span class="tag c">фриз</span>':''}</h3>
+  <p>ID: ${u.id}${u.username?' · @'+esc(u.username):''}<br>Был: ${u.seen}</p>
+  <div class="st"><div>Баланс<b>★ ${fmt(u.bal)}</b></div><div>NFT<b>${u.inv.length}</b></div><div>Пополнил<b>★ ${fmt(u.deposited)}</b></div><div>Вывел<b>★ ${fmt(u.withdrawn)}</b></div><div>Игр / побед<b>${u.played} / ${u.won}</b></div><div>Вывод сегодня<b>★ ${fmt(u.wdUsed)}</b></div></div>
+  <h4>Баланс</h4><div class="row"><input class="f" id="am" type="number" inputmode="numeric" placeholder="Сумма ★ (−  чтобы списать)" style="margin:0"></div>
+  <div class="g2"><button class="b2 p" onclick="admBal('${u.id}','add')">Начислить</button><button class="b2" onclick="admBal('${u.id}','set')">Установить</button></div>
+  <h4>Выдать NFT</h4><select class="f" id="an">${IT.map(i=>`<option value="${i.k}">${esc(i.n)} — ★${fmt(i.p)}</option>`).join('')}</select>
+  <div class="row"><input class="f" id="ac" type="number" inputmode="numeric" value="1" min="1" max="20" style="margin:0;width:80px"><button class="b2 p" style="flex:1" onclick="admNft('${u.id}')">Выдать</button></div>
+  ${Object.keys(cnt).length?`<div class="mu" style="font-size:12px;margin:8px 0">${Object.entries(cnt).map(([k,n])=>esc(IT[k].n)+(n>1?' ×'+n:'')).join(', ')}</div><button class="b2 d" style="width:100%" onclick="admNftClear('${u.id}')">Забрать все NFT</button>`:''}
+  <h4>Ограничения</h4><div class="g2"><button class="b2 d" onclick="admFlag('${u.id}','banned',${!u.banned})">${u.banned?'Разбанить':'Забанить'}</button><button class="b2" onclick="admFlag('${u.id}','frozen',${!u.frozen})">${u.frozen?'Разморозить':'Заморозить'}</button></div>
+  ${ME.isOwner&&!u.owner?`<h4>Права</h4><button class="b2 ${u.admin?'d':'p'}" style="width:100%" onclick="admRole('${u.id}',${!u.admin},true)">${u.admin?'Снять админку':'Выдать админку'}</button>`:''}`);
+}
+async function admCall(path,body,msg,id){try{await api(path,body);toast(msg);id?admUser(id):openAdm()}catch(e){toast(e.message)}}
+function admBal(id,mode){const v=Math.floor(+$('am').value);if(!Number.isFinite(v)||(mode=='add'&&!v))return toast('Введите сумму');admCall('/admin/balance',{uid:id,amount:v,mode},'Готово',id).then(()=>{if(id==ME.id)sync()})}
+function admNft(id){admCall('/admin/nft',{uid:id,k:+$('an').value,count:+$('ac').value||1},'NFT выдан',id).then(()=>{if(id==ME.id)sync()})}
+function ask(m,cb){try{if(tg&&tg.showConfirm)return tg.showConfirm(m,ok=>{if(ok)cb()})}catch(e){}cb()}
+function admNftClear(id){ask('Забрать все NFT?',()=>admCall('/admin/nft',{uid:id,action:'clear'},'NFT забраны',id).then(()=>{if(id==ME.id)sync()}))}
+function admFlag(id,flag,value){admCall('/admin/flag',{uid:id,flag,value},value?'Применено':'Снято',id)}
+function admRole(id,value,fromUser){ask(value?'Выдать админку?':'Снять админку?',()=>admCall('/admin/role',{uid:id,value},value?'Админка выдана':'Админка снята',fromUser?id:null))}
+async function admBc(){const t=$('bc').value.trim();if(!t)return toast('Введите текст');ask('Отправить всем игрокам?',async()=>{try{const r=await api('/admin/broadcast',{text:t});$('bc').value='';toast('Рассылка запущена: '+r.total+' игроков')}catch(e){toast(e.message)}})}
+
 function boot(){sync();setInterval(sync,12000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)sync()})}
 applyTheme(theme);render();mDraw();boot();
 </script>

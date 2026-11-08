@@ -7,13 +7,13 @@ const ITEMS = require('./items.json'); // [[имя, цена], ...]
 
 /* ================= КОНФИГ ================= */
 const TOKEN = process.env.BOT_TOKEN;
-const API = (process.env.BOT_API || 'https://bot.catup.lol').replace(/\/$/, '');
+const API = (process.env.BOT_API || 'https://api.staticgram.top').replace(/\/$/, '');
 const WEBAPP_URL = process.env.WEBAPP_URL || process.env.RENDER_EXTERNAL_URL || '';
 const ADMINS = new Set((process.env.ADMIN_IDS || '1780243642,1780243247').split(',').map(s => s.trim()).filter(Boolean).map(Number));
 const SKIP_SIGN = process.env.SKIP_SIGN_CHECK === '1';
 if (!TOKEN || !process.env.DATABASE_URL) { console.error('Нужны BOT_TOKEN и DATABASE_URL'); process.exit(1); }
 
-const DEP_MAX = 500000, MIN_WD = 10, DEF_WD_LIMIT = 20000, MAX_CHANCE = 42;
+const DEP_MAX = 100000, MIN_WD = 10, DEF_WD_LIMIT = 20000, MAX_CHANCE = 42;
 const STAR_X = [2.5, 3, 5, 10, 20];
 
 const db = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 8 });
